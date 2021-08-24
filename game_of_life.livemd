@@ -1,0 +1,95 @@
+# Game of Life
+
+## Section
+
+```elixir
+defmodule Life do
+  def evolve(alive) do
+    alive_set = MapSet.new(alive)
+
+    alive
+    |> Enum.reduce(%{}, &increment_neighbours/2)
+    |> Enum.map(fn {point, count} -> {point, alive?(point, alive_set, count)} end)
+    |> Enum.filter(fn {_point, alive} -> alive end)
+    |> Enum.map(fn {point, _alive} -> point end)
+  end
+
+  def alive?(_, _, 3), do: true
+  def alive?(point, alive_set, 2), do: MapSet.member?(alive_set, point)
+  def alive?(_, _, _), do: false
+
+  def increment_neighbours({x, y}, map) do
+    [{0, 1}, {1, 1}, {1, 0}, {1, -1}, {0, -1}, {-1, -1}, {-1, 0}, {-1, 1}]
+    |> Enum.map(fn {x_d, y_d} -> {x + x_d, y + y_d} end)
+    |> Enum.reduce(map, &Map.update(&2, &1, 1, fn n -> n + 1 end))
+  end
+end
+```
+
+```elixir
+defmodule Life.Test do
+  defp oscillator?(original, current, 0), do: Enum.sort(original) == Enum.sort(current)
+  defp oscillator?(original, current, n), do: oscillator?(original, Life.evolve(current), n - 1)
+
+  @spec oscillator?(Life.points(), non_neg_integer()) :: boolean()
+  def oscillator?(original, n), do: oscillator?(original, original, n)
+
+  @spec still_life?(Life.points()) :: boolean()
+  def still_life?(original), do: oscillator?(original, 1)
+end
+```
+
+```elixir
+defmodule Life.Pattern do
+  def block, do: [{0, 0}, {0, 1}, {1, 1}, {1, 0}]
+  def beehive, do: [{0, 1}, {1, 0}, {1, 2}, {2, 0}, {2, 2}, {3, 1}]
+  def loaf, do: [{0, 2}, {1, 1}, {1, 3}, {2, 0}, {2, 3}, {3, 1}, {3, 2}]
+  def boat, do: [{0, 1}, {0, 2}, {1, 0}, {1, 2}, {2, 1}]
+  def tub, do: [{0, 1}, {1, 0}, {1, 2}, {2, 1}]
+  def blinker, do: [{0, 0}, {0, 1}, {0, 2}]
+  def toad, do: [{0, 0}, {1, 0}, {2, 0}, {1, 1}, {2, 1}, {3, 1}]
+  def beacon, do: [{0, 2}, {0, 3}, {1, 3}, {2, 0}, {3, 0}, {3, 1}]
+end
+```
+
+```elixir
+ExUnit.start(autorun: false)
+
+defmodule MyTest do
+  use ExUnit.Case, async: true
+
+  test "block is still_life?" do
+    assert Life.Test.still_life?(Life.Pattern.block())
+  end
+
+  test "beehive is still_life?" do
+    assert Life.Test.still_life?(Life.Pattern.beehive())
+  end
+
+  test "loaf is still_life?" do
+    assert Life.Test.still_life?(Life.Pattern.loaf())
+  end
+
+  test "boat is still_life?" do
+    assert Life.Test.still_life?(Life.Pattern.boat())
+  end
+
+  test "tub is still_life?" do
+    assert Life.Test.still_life?(Life.Pattern.tub())
+  end
+
+  test "blinker is oscillator? of cycle 2" do
+    assert Life.Test.oscillator?(Life.Pattern.blinker(), 2)
+  end
+
+  test "toad is oscillator? of cycle 2" do
+    assert Life.Test.oscillator?(Life.Pattern.toad(), 2)
+  end
+
+  test "beacon is oscillator? of cycle 2" do
+    assert Life.Test.oscillator?(Life.Pattern.beacon(), 2)
+  end
+end
+
+ExUnit.run()
+```

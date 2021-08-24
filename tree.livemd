@@ -1,0 +1,57 @@
+# Fun with trees
+
+## Binary trees
+
+```elixir
+defmodule Tree do
+  defstruct [:left, :item, :right]
+
+  def from_array([]), do: nil
+
+  def from_array(list) do
+    m = floor(length(list) / 2)
+    [item | right] = Enum.drop(list, m)
+
+    %Tree{
+      left: from_array(Enum.take(list, m)),
+      item: item,
+      right: from_array(right)
+    }
+  end
+
+  def depth(nil), do: 0
+  def depth(%Tree{left: l, right: r}), do: 1 + max(depth(l), depth(r))
+end
+
+defimpl Inspect, for: Tree do
+  import Inspect.Algebra
+
+  def inspect(%Tree{left: l, item: i, right: r}, opts) do
+    tree_to_doc = fn t -> if t == nil, do: ".", else: to_doc(t, opts) end
+    concat(["<", tree_to_doc.(l), to_doc(i, opts), tree_to_doc.(r), ">"])
+  end
+end
+```
+
+```elixir
+%Tree{item: 1}
+```
+
+<!-- livebook:{"livebook_object":"cell_input","name":"size","type":"number","value":"63"} -->
+
+```elixir
+{size, _} = IO.gets("size") |> String.trim() |> Integer.parse()
+size
+```
+
+```elixir
+items = Enum.to_list(1..size)
+```
+
+```elixir
+tree = Tree.from_array(items)
+```
+
+```elixir
+Tree.depth(tree)
+```
