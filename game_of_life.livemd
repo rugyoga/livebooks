@@ -4,20 +4,25 @@
 
 ```elixir
 defmodule Life do
+  @type point() :: {integer(), integer()}
+  @type points() :: [point()]
+  @type point_set() :: MapSet.t(point())
+  @type point_count() :: %{point() => non_neg_integer()}
+
+  @spec evolve(points()) :: points()
   def evolve(alive) do
     alive_set = MapSet.new(alive)
 
     alive
     |> Enum.reduce(%{}, &increment_neighbours/2)
-    |> Enum.map(fn {point, count} -> {point, alive?(point, alive_set, count)} end)
-    |> Enum.filter(fn {_point, alive} -> alive end)
-    |> Enum.map(fn {point, _alive} -> point end)
+    |> Enum.filter(&alive?(&1, alive_set))
+    |> Enum.map(fn {point, _} -> point end)
   end
 
-  def alive?(_, _, 3), do: true
-  def alive?(point, alive_set, 2), do: MapSet.member?(alive_set, point)
-  def alive?(_, _, _), do: false
+  @spec alive?({point(), non_neg_integer()}, point_set()) :: boolean()
+  def alive?({p, c}, alive_set), do: c == 3 || (c == 2 && MapSet.member?(alive_set, p))
 
+  @spec increment_neighbours(point(), point_count()) :: point_count()
   def increment_neighbours({x, y}, map) do
     [{0, 1}, {1, 1}, {1, 0}, {1, -1}, {0, -1}, {-1, -1}, {-1, 0}, {-1, 1}]
     |> Enum.map(fn {x_d, y_d} -> {x + x_d, y + y_d} end)
@@ -28,14 +33,26 @@ end
 
 ```elixir
 defmodule Life.Test do
-  defp oscillator?(original, current, 0), do: Enum.sort(original) == Enum.sort(current)
-  defp oscillator?(original, current, n), do: oscillator?(original, Life.evolve(current), n - 1)
+  defp oscillator?(original, current, f, 0), do: f.(original) == f.(current)
+
+  defp oscillator?(original, current, f, n),
+    do: oscillator?(original, Life.evolve(current), f, n - 1)
 
   @spec oscillator?(Life.points(), non_neg_integer()) :: boolean()
-  def oscillator?(original, n), do: oscillator?(original, original, n)
+  def oscillator?(original, n), do: oscillator?(original, original, &Enum.sort/1, n)
 
   @spec still_life?(Life.points()) :: boolean()
   def still_life?(original), do: oscillator?(original, 1)
+
+  @spec translate_to_origin(Life.points()) :: Life.points()
+  def translate_to_origin(points) do
+    [x_min, y_min] = points |> Enum.unzip() |> Tuple.to_list() |> Enum.map(&Enum.min/1)
+    Enum.map(points, fn {x, y} -> {x - x_min, y - y_min} end)
+  end
+
+  @spec spaceship?(Life.points(), non_neg_integer()) :: boolean()
+  def spaceship?(original, n),
+    do: oscillator?(original, original, &Enum.sort(translate_to_origin(&1)), n)
 end
 ```
 
@@ -49,6 +66,46 @@ defmodule Life.Pattern do
   def blinker, do: [{0, 0}, {0, 1}, {0, 2}]
   def toad, do: [{0, 0}, {1, 0}, {2, 0}, {1, 1}, {2, 1}, {3, 1}]
   def beacon, do: [{0, 2}, {0, 3}, {1, 3}, {2, 0}, {3, 0}, {3, 1}]
+  def glider, do: [{0, 0}, {1, 0}, {2, 0}, {2, 1}, {1, 2}]
+
+  def small_spaceship,
+    do: [{0, 1}, {0, 3}, {1, 0}, {2, 0}, {3, 0}, {3, 3}, {4, 0}, {4, 1}, {4, 2}]
+
+  def medium_spaceship,
+    do: [
+      {0, 1},
+      {0, 2},
+      {1, 1},
+      {1, 2},
+      {1, 3},
+      {2, 1},
+      {2, 2},
+      {2, 3},
+      {3, 0},
+      {3, 2},
+      {3, 3},
+      {4, 0},
+      {4, 1},
+      {4, 2},
+      {5, 1}
+    ]
+
+  def large_spaceship,
+    do: [
+      {0, 1},
+      {0, 3},
+      {1, 4},
+      {2, 0},
+      {2, 4},
+      {3, 0},
+      {3, 4},
+      {4, 4},
+      {5, 1},
+      {5, 4},
+      {6, 2},
+      {6, 3},
+      {6, 4}
+    ]
 end
 ```
 
@@ -89,7 +146,53 @@ defmodule MyTest do
   test "beacon is oscillator? of cycle 2" do
     assert Life.Test.oscillator?(Life.Pattern.beacon(), 2)
   end
+
+  test "glider is spaceship? of cycle 4" do
+    assert Life.Test.spaceship?(Life.Pattern.glider(), 4)
+  end
+
+  test "small_spaceship is spaceship? of cycle 4" do
+    assert Life.Test.spaceship?(Life.Pattern.small_spaceship(), 4)
+  end
+
+  test "medium_spaceship is spaceship? of cycle 4" do
+    assert Life.Test.spaceship?(Life.Pattern.medium_spaceship(), 4)
+  end
+
+  test "large_spaceship is spaceship? of cycle 4" do
+    assert Life.Test.spaceship?(Life.Pattern.large_spaceship(), 4)
+  end
 end
 
 ExUnit.run()
+```
+
+```elixir
+defmodule Life do
+  def evolve(alive) do
+    alive_set = MapSet.new(alive)
+
+    alive
+    |> Enum.reduce(%{}, &increment_counts(create_neighbours(&1), &2))
+    |> Enum.filter(&alive?(&1, alive_set))
+    |> Enum.unzip()
+    |> elem(0)
+  end
+
+  def alive?({p, c}, alive_set), do: c == 3 || (c == 2 && MapSet.member?(alive_set, p))
+
+  @directions [{0, 1}, {1, 1}, {1, 0}, {1, -1}, {0, -1}, {-1, -1}, {-1, 0}, {-1, 1}]
+  def create_neighbours({x, y}) do
+    Enum.map(@directions, fn {x_d, y_d} -> {x + x_d, y + y_d} end)
+  end
+
+  def increment_counts(points, count_map) do
+    Enum.reduce(points, count_map, &Map.update(&2, &1, 1, fn n -> n + 1 end))
+  end
+end
+
+[{0, 0}, {1, 0}, {2, 0}]
+|> Life.evolve()
+|> Life.evolve()
+|> IO.inspect()
 ```
