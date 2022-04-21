@@ -3,6 +3,12 @@
 ## Section
 
 ```elixir
+Mix.install([
+  {:kino, "~> 0.5.0"}
+])
+```
+
+```elixir
 defmodule Life do
   @type point() :: {integer(), integer()}
   @type points() :: [point()]
@@ -32,6 +38,20 @@ end
 ```
 
 ```elixir
+defmodule Life.T do
+  def translate(points, x_d, y_d), do: points |> Enum.map(fn {x, y} -> {x + x_d, y + y_d} end)
+  def flip(points), do: points |> Enum.map(fn {x, y} -> {y, x} end)
+  def rotate(points), do: points |> Enum.map(fn {x, y} -> {y, -x} end)
+
+  @spec translate_to_origin(Life.points()) :: Life.points()
+  def translate_to_origin(points) do
+    [x_min, y_min] = points |> Enum.unzip() |> Tuple.to_list() |> Enum.map(&Enum.min/1)
+    Enum.map(points, fn {x, y} -> {x - x_min, y - y_min} end)
+  end
+end
+```
+
+```elixir
 defmodule Life.Test do
   defp oscillator?(original, current, f, 0), do: f.(original) == f.(current)
 
@@ -44,15 +64,9 @@ defmodule Life.Test do
   @spec still_life?(Life.points()) :: boolean()
   def still_life?(original), do: oscillator?(original, 1)
 
-  @spec translate_to_origin(Life.points()) :: Life.points()
-  def translate_to_origin(points) do
-    [x_min, y_min] = points |> Enum.unzip() |> Tuple.to_list() |> Enum.map(&Enum.min/1)
-    Enum.map(points, fn {x, y} -> {x - x_min, y - y_min} end)
-  end
-
   @spec spaceship?(Life.points(), non_neg_integer()) :: boolean()
   def spaceship?(original, n),
-    do: oscillator?(original, original, &Enum.sort(translate_to_origin(&1)), n)
+    do: oscillator?(original, original, &Enum.sort(Life.T.translate_to_origin(&1)), n)
 end
 ```
 
@@ -168,31 +182,89 @@ ExUnit.run()
 ```
 
 ```elixir
-defmodule Life do
-  def evolve(alive) do
-    alive_set = MapSet.new(alive)
+defmodule Life.Scene do
+  @moduledoc """
+  The scene for the game objects.
+  """
+  @size 1
+  @color "black"
+  @background "yellow"
 
-    alive
-    |> Enum.reduce(%{}, &increment_counts(create_neighbours(&1), &2))
-    |> Enum.filter(&alive?(&1, alive_set))
-    |> Enum.unzip()
-    |> elem(0)
+  defstruct [:width, :height, :points]
+
+  def point_to_svg({x, y}) do
+    rect(x, y, @size, @size, @color)
   end
 
-  def alive?({p, c}, alive_set), do: c == 3 || (c == 2 && MapSet.member?(alive_set, p))
-
-  @directions [{0, 1}, {1, 1}, {1, 0}, {1, -1}, {0, -1}, {-1, -1}, {-1, 0}, {-1, 1}]
-  def create_neighbours({x, y}) do
-    Enum.map(@directions, fn {x_d, y_d} -> {x + x_d, y + y_d} end)
+  def rect(x, y, width, height, fill) do
+    "<rect x=\"#{x}\" y=\"#{y}\" width=\"#{width}\" height=\"#{height}\" fill=\"#{fill}\" />"
   end
 
-  def increment_counts(points, count_map) do
-    Enum.reduce(points, count_map, &Map.update(&2, &1, 1, fn n -> n + 1 end))
+  def to_svg(%Life.Scene{width: width, height: height, points: points}) do
+    svgs = Enum.map(points, &point_to_svg/1)
+
+    """
+    <svg viewBox="0 0 #{width} #{height}"
+         xmlns="http://www.w3.org/2000/svg">
+      #{[rect(0, 0, width, height, @background) | svgs]}
+    </svg>
+    """
+  end
+
+  def inside?(scene, {x, y}) do
+    x >= 0 and y >= 0 and x < scene.width and y < scene.height
+  end
+
+  def step(scene = %Life.Scene{points: points}) do
+    %Life.Scene{scene | points: Life.evolve(points)}
+  end
+
+  def display(scene, frame) do
+    scene
+    |> Life.Scene.to_svg()
+    |> Kino.Image.new(:svg)
+    |> then(&Kino.Frame.render(frame, &1))
+  end
+
+  def animate(scene, frame, millis) do
+    Process.sleep(millis)
+    scene = Life.Scene.step(scene)
+    display(scene, frame)
+    scene
+  end
+
+  def animation(frame, scene, millis) do
+    Stream.iterate(scene, &animate(&1, frame, millis))
+    |> Stream.take_while(fn scene -> Enum.any?(scene.points, &inside?(scene, &1)) end)
+    |> Stream.run()
   end
 end
+```
 
-[{0, 0}, {1, 0}, {2, 0}]
-|> Life.evolve()
-|> Life.evolve()
-|> IO.inspect()
+```elixir
+alias Life.T
+alias Life.Pattern
+
+frame = Kino.Frame.new() |> Kino.render()
+
+points =
+  [
+    Pattern.block(),
+    Pattern.beehive() |> T.translate(5, 5),
+    Pattern.loaf() |> T.translate(10, 10),
+    Pattern.boat() |> T.translate(15, 15),
+    Pattern.tub() |> T.translate(20, 20),
+    Pattern.blinker() |> T.translate(25, 25),
+    Pattern.toad() |> T.translate(30, 30),
+    Pattern.beacon() |> T.translate(35, 35),
+    Pattern.glider() |> T.translate(40, 40),
+    Pattern.small_spaceship() |> T.translate(50, 50),
+    Pattern.medium_spaceship() |> T.translate(60, 60),
+    Pattern.large_spaceship() |> T.translate(70, 70)
+  ]
+  |> List.flatten()
+
+scene = %Life.Scene{width: 100, height: 100, points: points}
+
+Life.Scene.animation(frame, scene, 80)
 ```

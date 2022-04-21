@@ -1,0 +1,237 @@
+# Animated maps for Dora
+
+## Animated maps for Dora
+
+```elixir
+Mix.install([{:kino, "~> 0.5.0"}, {:csv, "~> 2.4"}])
+```
+
+```elixir
+defmodule Rectangle do
+  @type point :: {float, float}
+  defstruct centre: {0.0, 0.0}, angle: 0.0, length: 1.0, width: 1.0
+  @type t :: %Rectangle{centre: point, angle: float, length: float, width: float}
+
+  def angled_vector(a, d), do: {:math.cos(a) * d, :math.sin(a) * d}
+  def plus({x, y}, {x_d, y_d}), do: {x + x_d, y + y_d}
+  def minus({x, y}, {x_d, y_d}), do: {x - x_d, y - y_d}
+
+  @spec bounds(t) :: [point]
+  def bounds(%Rectangle{centre: p, angle: a, length: length, width: width}) do
+    l = angled_vector(a, 0.5 * length)
+    w = angled_vector(a + 0.5 * :math.pi(), 0.5 * width)
+    # front  left
+    [
+      p |> plus(l) |> minus(w),
+      # front right
+      p |> plus(l) |> plus(w),
+      # back right
+      p |> minus(l) |> plus(w),
+      # back  left
+      p |> minus(l) |> minus(w)
+    ]
+  end
+
+  @spec move(t, float) :: t
+  def move(rectangle = %Rectangle{centre: centre, angle: theta}, distance) do
+    %Rectangle{rectangle | centre: centre |> plus(angled_vector(theta, distance))}
+  end
+
+  @spec turn(t, float) :: t
+  def turn(rectangle = %Rectangle{angle: angle}, delta) do
+    %Rectangle{rectangle | angle: angle + delta}
+  end
+end
+```
+
+```elixir
+%Rectangle{angle: :math.pi()}
+|> Rectangle.move(10.0)
+|> Rectangle.turn(:math.pi() / 2.0)
+|> Rectangle.move(10.0)
+```
+
+```elixir
+defmodule Kino.Leaflet do
+  use Kino.JS
+  use Kino.JS.Live
+
+  def new(center, zoom) do
+    Kino.JS.Live.new(__MODULE__, {normalize_location(center), zoom})
+  end
+
+  def add_marker(kino, name, location) do
+    Kino.JS.Live.cast(kino, {:add_marker, name, normalize_location(location)})
+  end
+
+  def move_marker(kino, name, location) do
+    Kino.JS.Live.cast(kino, {:move_marker, name, normalize_location(location)})
+  end
+
+  def add_polygon(kino, name, corners, options \\ %{color: 'blue'}) do
+    Kino.JS.Live.cast(
+      kino,
+      {:add_polygon, name, Enum.map(corners, &normalize_location/1), %{color: 'blue'}}
+    )
+  end
+
+  def move_polygon(kino, name, corners) do
+    Kino.JS.Live.cast(kino, {:move_polygon, name, Enum.map(corners, &normalize_location/1)})
+  end
+
+  @impl true
+  def init({center, zoom}, ctx) do
+    {:ok, assign(ctx, center: center, zoom: zoom, locations: %{}, polygons: %{})}
+  end
+
+  @impl true
+  def handle_connect(ctx) do
+    data = %{
+      center: ctx.assigns.center,
+      zoom: ctx.assigns.zoom,
+      locations: ctx.assigns.locations,
+      polygons: ctx.assigns.polygons
+    }
+
+    {:ok, data, ctx}
+  end
+
+  @impl true
+  def handle_cast({:add_marker, name, location}, ctx) do
+    broadcast_event(ctx, "add_marker", [name, location])
+    ctx = update(ctx, :locations, &Map.put_new(&1, name, location))
+    {:noreply, ctx}
+  end
+
+  @impl true
+  def handle_cast({:move_marker, name, location}, ctx) do
+    broadcast_event(ctx, "move_marker", [name, location])
+    ctx = update(ctx, :locations, &Map.put(&1, name, location))
+    {:noreply, ctx}
+  end
+
+  @impl true
+  def handle_cast({:add_polygon, name, corners, options}, ctx) do
+    broadcast_event(ctx, "add_polygon", [name, corners, options])
+    ctx = update(ctx, :polygons, &Map.put_new(&1, name, corners))
+    {:noreply, ctx}
+  end
+
+  @impl true
+  def handle_cast({:move_polygon, name, corners}, ctx) do
+    broadcast_event(ctx, "move_polygon", [name, corners])
+    ctx = update(ctx, :polygons, &Map.put(&1, name, corners))
+    {:noreply, ctx}
+  end
+
+  defp normalize_location({lat, lng}), do: [lat, lng]
+  defp normalize_location(x = [_, _]), do: x
+  defp normalize_location(_), do: raise(ArgumentError, "not tuple or list")
+
+  asset "main.js" do
+    """
+    import * as L from "https://cdn.jsdelivr.net/npm/leaflet@1.7.1/dist/leaflet-src.esm.js";
+
+    export async function init(ctx, data) {
+      ctx.root.style.height = "400px";
+      const markers = new Map();
+      const polygons = new Map();
+
+      // Leaflet requires styles to be present before creating the map,
+      // so we await for the import to finish
+      await ctx.importCSS("https://cdn.jsdelivr.net/npm/leaflet@1.7.1/dist/leaflet.css");
+
+      const { center, zoom, locations, rectangles } = data;
+      const map = L.map(ctx.root, { center, zoom });
+
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+      }).addTo(map);
+
+      //locations.forEach( location => { L.marker(location).addTo(map); });
+
+      const path = 'http://127.0.0.1:8887/car_icon.jpg';
+      const icon = L.icon({iconUrl: path, iconSize: [10, 20]});
+      const add_marker = ([name, location]) => {
+        const marker = L.marker(location, {title: name});
+        markers.set(name, marker);
+        marker.addTo(map);
+      };
+
+      const move_marker = ([name, location]) => {
+        markers.get(name).setLatLng(location);
+      };
+
+      const add_polygon = ([name, corners, options]) => {
+        const polygon = L.polygon(corners, {color: "blue"});
+        polygons.set(name, polygon);
+        polygon.addTo(map);
+      };
+
+      const move_polygon = ([name, corners]) => {
+        polygons.get(name).setLatLngs(corners);
+      };
+      const sleep = millis => new Promise(r => setTimeout(r, millis));
+
+      ctx.handleEvent("add_marker", add_marker);
+      ctx.handleEvent("move_marker", move_marker);
+      ctx.handleEvent("add_polygon", add_polygon);
+      ctx.handleEvent("move_polygon", move_polygon);
+    }
+    """
+  end
+end
+```
+
+```elixir
+lat_input = Kino.Input.text("latitude") |> Kino.render()
+lng_input = Kino.Input.text("longitude")
+```
+
+```elixir
+defmodule LoadCSV do
+  def load_csv(filename \\ "livebooks/THillEast.csv") do
+    "../#{filename}"
+    |> Path.expand(__DIR__)
+    |> File.stream!()
+    |> CSV.decode!(headers: true)
+  end
+end
+
+rows = LoadCSV.load_csv()
+
+rows |> Enum.fetch!(2) |> Map.get(" longitude") |> String.trim() |> String.to_float()
+```
+
+```elixir
+#   39.5407175693864
+lat = Kino.Input.read(lat_input) |> String.to_float()
+# -122.33136040624719
+lng = Kino.Input.read(lng_input) |> String.to_float()
+start = {lat, lng}
+# 1 meter (at the equator)
+m = 0.00001 / 1.11
+# 1 degree
+d = :math.pi() / 180.0
+cycle = 33
+
+move = fn d, a -> fn r -> r |> Rectangle.turn(a) |> Rectangle.move(d) end end
+pause = fn n -> Process.sleep(n * 33) end
+car = %Rectangle{centre: start, angle: 90 * d, length: 10 * m, width: 3 * m}
+step = move.(10 * m, 10 * d)
+
+circle = Stream.iterate(car, step) |> Enum.take(37) |> Enum.drop(1)
+map = Kino.Leaflet.new(start, 15) |> Kino.render()
+# create_car = fn car -> Kino.Leaflet.add_polygon(map, "car", Rectangle.bounds(car)) end
+# move_car = fn car -> Kino.Leaflet.move_polygon(map, "car", Rectangle.bounds(car)) end
+create_car = fn point -> Kino.Leaflet.add_marker(map, "car", point) end
+move_car = fn point -> Kino.Leaflet.move_marker(map, "car", point) end
+get_f = fn row, key -> row[" #{key}"] |> String.trim() |> String.to_float() end
+
+read_row = fn row -> {get_f.(row, "latitude") / 60.0, -get_f.(row, "longitude") / 60.0} end
+rows = rows |> Enum.map(read_row)
+
+create_car.(rows |> List.first())
+Enum.each(rows, fn row -> move_car.(row) end)
+# read_row.(rows |> List.first)
+```

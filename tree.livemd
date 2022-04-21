@@ -3,6 +3,10 @@
 ## Binary trees
 
 ```elixir
+Mix.install([{:kino, "~> 0.5.0"}])
+```
+
+```elixir
 defmodule Tree do
   defstruct [:left, :item, :right]
 
@@ -35,12 +39,11 @@ end
 
 ```elixir
 %Tree{item: 1}
+size_input = Kino.Input.text("size")
 ```
 
-<!-- livebook:{"livebook_object":"cell_input","name":"size","type":"number","value":"63"} -->
-
 ```elixir
-{size, _} = IO.gets("size") |> String.trim() |> Integer.parse()
+{size, _} = size_input |> Kino.Input.read() |> String.trim() |> Integer.parse()
 size
 ```
 
